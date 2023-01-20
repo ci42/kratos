@@ -2,6 +2,8 @@ module github.com/ory/kratos
 
 go 1.19
 
+replace github.com/gobuffalo/pop/v6 => github.com/alnr/pop/v6 v6.0.0-20230118125348-fbb24cf549d2
+
 replace (
 	github.com/bradleyjkemp/cupaloy/v2 => github.com/aeneasr/cupaloy/v2 v2.6.1-0.20210924214125-3dfdd01210a3
 
@@ -171,11 +173,11 @@ require (
 	github.com/go-sql-driver/mysql v1.7.0 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/gobuffalo/envy v1.10.2 // indirect
-	github.com/gobuffalo/flect v0.3.0 // indirect
+	github.com/gobuffalo/flect v1.0.0 // indirect
 	github.com/gobuffalo/github_flavored_markdown v1.1.3 // indirect
 	github.com/gobuffalo/helpers v0.6.7 // indirect
 	github.com/gobuffalo/nulls v0.4.2 // indirect
-	github.com/gobuffalo/plush/v4 v4.1.16 // indirect
+	github.com/gobuffalo/plush/v4 v4.1.18 // indirect
 	github.com/gobuffalo/tags/v3 v3.1.4 // indirect
 	github.com/gobuffalo/validate/v3 v3.3.3 // indirect
 	github.com/goccy/go-yaml v1.9.6 // indirect

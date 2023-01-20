@@ -697,7 +697,7 @@ continueLogin:
 	var i *identity.Identity
 	var group node.UiNodeGroup
 	for _, ss := range h.d.AllLoginStrategies() {
-		interim, err := ss.Login(w, r, f, sess)
+		interim, err := ss.Login(w, r, f, sess.IdentityID)
 		group = ss.NodeGroup()
 		if errors.Is(err, flow.ErrStrategyNotResponsible) {
 			continue
