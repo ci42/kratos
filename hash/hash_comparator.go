@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -48,6 +49,8 @@ func Compare(ctx context.Context, password []byte, hash []byte) error {
 		return CompareFirebaseScrypt(ctx, password, hash)
 	case IsMD5Hash(hash):
 		return CompareMD5(ctx, password, hash)
+	case IsLegacyHash(hash):
+		return CompareLegacy(ctx, password, hash)
 	default:
 		return errors.WithStack(ErrUnknownHashAlgorithm)
 	}
@@ -232,6 +235,18 @@ func CompareMD5(_ context.Context, password []byte, hash []byte) error {
 	return errors.WithStack(ErrMismatchedHashAndPassword)
 }
 
+func CompareLegacy(ctx context.Context, pwd, encodedHash []byte) error {
+	phc, alg, format, iterations, salt, pepper, err := decodeLegacyHash(string(encodedHash))
+	if err != nil {
+		return err
+	}
+	hash, err := legacyHash(alg, format, iterations, salt, pepper, pwd)
+	if err != nil {
+		return err
+	}
+	return CompareArgon2id(ctx, hash, []byte(phc))
+}
+
 var (
 	isBcryptHash         = regexp.MustCompile(`^\$2[abzy]?\$`)
 	isArgon2idHash       = regexp.MustCompile(`^\$argon2id\$`)
@@ -242,6 +257,7 @@ var (
 	isSHAHash            = regexp.MustCompile(`^\$sha(1|256|512)\$`)
 	isFirebaseScryptHash = regexp.MustCompile(`^\$firescrypt\$`)
 	isMD5Hash            = regexp.MustCompile(`^\$md5\$`)
+	isLegacyHash         = regexp.MustCompile(`^\$legacy\$`)
 )
 
 func IsBcryptHash(hash []byte) bool         { return isBcryptHash.Match(hash) }
@@ -253,6 +269,7 @@ func IsSSHAHash(hash []byte) bool           { return isSSHAHash.Match(hash) }
 func IsSHAHash(hash []byte) bool            { return isSHAHash.Match(hash) }
 func IsFirebaseScryptHash(hash []byte) bool { return isFirebaseScryptHash.Match(hash) }
 func IsMD5Hash(hash []byte) bool            { return isMD5Hash.Match(hash) }
+func IsLegacyHash(hash []byte) bool         { return isLegacyHash.Match(hash) }
 
 func IsValidHashFormat(hash []byte) bool {
 	if IsBcryptHash(hash) ||
@@ -263,7 +280,8 @@ func IsValidHashFormat(hash []byte) bool {
 		IsSSHAHash(hash) ||
 		IsSHAHash(hash) ||
 		IsFirebaseScryptHash(hash) ||
-		IsMD5Hash(hash) {
+		IsMD5Hash(hash) ||
+		IsLegacyHash(hash) {
 		return true
 	} else {
 		return false
@@ -557,4 +575,79 @@ func decodeMD5Hash(encodedHash string) (pf, salt, hash []byte, err error) {
 	default:
 		return nil, nil, nil, ErrInvalidHash
 	}
+}
+
+// decodeLegacyHash decodes argon2id wrapped legacy password hash.
+// format: $legacy$alg=<md5|sha1|sha256|sha512>,format=<base64 encoded format, e.g: '{PEPPER}-{PWD}-{SALT}'>,i=<number of iterations>,(salt=<base64 encoded salt>,pepper=<base64 encoded pepper>)$<argon2id encoded hash>
+func decodeLegacyHash(encodedHash string) (phc, alg, format string, iterations int, salt, pepper []byte, err error) {
+	parts := strings.SplitN(encodedHash, "$", 4)
+	if len(parts) != 4 {
+		return "", "", "", 0, nil, nil, ErrInvalidHash
+	}
+	phc = "$" + parts[3]
+	legacyParams := strings.Split(parts[2], ",")
+	for _, lp := range legacyParams {
+		switch kv := strings.Split(lp, "="); kv[0] {
+		case "alg":
+			alg = kv[1]
+		case "format":
+			f, err := base64.RawStdEncoding.DecodeString(kv[1])
+			if err != nil {
+				return "", "", "", 0, nil, nil, ErrInvalidHash
+			}
+			format = string(f)
+		case "i":
+			iterations, err = strconv.Atoi(kv[1])
+			if err != nil {
+				return "", "", "", 0, nil, nil, ErrInvalidHash
+			}
+		case "salt":
+			salt, err = base64.RawStdEncoding.DecodeString(kv[1])
+			if err != nil {
+				return "", "", "", 0, nil, nil, ErrInvalidHash
+			}
+		case "pepper":
+			pepper, err = base64.RawStdEncoding.DecodeString(kv[1])
+			if err != nil {
+				return "", "", "", 0, nil, nil, ErrInvalidHash
+			}
+		}
+	}
+	return
+}
+
+func legacyHash(alg, format string, iterations int, salt, pepper, pwd []byte) ([]byte, error) {
+	if len(pwd) < 1 || !strings.Contains(format, "{PWD}") || iterations < 1 || !(alg == "md5" || alg == "sha1" || alg == "sha256" || alg == "sha512") {
+		return nil, ErrInvalidHash
+	}
+	replacements := []string{"{PWD}", string(pwd)}
+	if salt != nil {
+		replacements = append(replacements, "{SALT}", string(salt))
+	}
+	if pepper != nil {
+		replacements = append(replacements, "{PEPPER}", string(pepper))
+	}
+	toHash := []byte(strings.NewReplacer(replacements...).Replace(format))
+
+	var hash []byte
+	for i := 1; i <= iterations; i++ {
+		switch alg {
+		case "md5":
+			sum := md5.Sum(toHash) //#nosec G401 -- compatibility for imported passwords
+			hash = sum[:]
+		case "sha1":
+			sum := sha1.Sum(toHash) //#nosec G401 -- compatibility for imported passwords
+			hash = sum[:]
+		case "sha256":
+			sum := sha256.Sum256(toHash)
+			hash = sum[:]
+		case "sha512":
+			sum := sha512.Sum512(toHash)
+			hash = sum[:]
+		default:
+			return nil, ErrUnknownHashAlgorithm
+		}
+		toHash = hash
+	}
+	return hash, nil
 }
